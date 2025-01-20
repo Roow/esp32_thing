@@ -1,8 +1,11 @@
 #include <stdio.h>
+#include <unistd.h>
+#include <sys/lock.h>
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
 #include "esp_log.h"
 #include "esp_err.h"
+#include "esp_timer.h"
 
 // dispaly
 #include "esp_lcd_panel_io.h"
@@ -36,15 +39,30 @@
 #define CLOCK_SPEED 20 * 1000 * 1000
 
 #define LVGL_BUFFER_SIZE        DISP_HEIGHT * 20 * sizeof(lv_color_t)
+#define LVGL_TASK_STACK_SIZE    4096
+#define LVGL_TASK_PRIORITY      2
 
-static void increase_lvgl_tick(void)
+
+static _lock_t lvgl_api_lock;
+static esp_lcd_panel_handle_t panel_handle = NULL;
+
+////////////// FUNTIONS //////////////
+extern void lv_example_get_started_1(void);
+
+static void increase_lvgl_tick(void *arg)
 {
     lv_tick_inc(LVGL_TICK_PERIOD_MS);
 }
 
 static void lv_flush_cb(lv_display_t * display, const lv_area_t * area, uint8_t * px_map)
 {
-    
+    esp_lcd_panel_handle_t panel_handle = (esp_lcd_panel_handle_t) lv_display_get_user_data(display);
+    int offsetx1 = area->x1;
+    int offsetx2 = area->x2;
+    int offsety1 = area->y1;
+    int offsety2 = area->y2;
+
+    esp_lcd_panel_draw_bitmap(panel_handle, offsetx1, offsety1, offsetx2 + 1, offsety2 + 1, px_map);
 
     lv_display_flush_ready(display);
 }
@@ -100,7 +118,6 @@ static esp_err_t lcd_init(void)
         }
     };
 
-    esp_lcd_panel_handle_t panel_handle = NULL;
     ESP_ERROR_CHECK(esp_lcd_new_panel_st7789(io_handle, &panel_config, &panel_handle));
 
     ESP_LOGI("APP_MAIN", "Resetting LCD panel");
@@ -115,7 +132,6 @@ static esp_err_t lcd_init(void)
     return ESP_OK;
 }
 
-
 static esp_err_t lvgl_init(void)
 {
     /* initialise LVGL */
@@ -123,19 +139,54 @@ static esp_err_t lvgl_init(void)
 
     /* tick interface*/
     ESP_LOGI("APP_MAIN", "Initialising LVGL tick interface");
+    esp_timer_handle_t lvgl_tick_timer = NULL;
+    const esp_timer_create_args_t lvgl_tick_timer_args = {
+        .callback = &increase_lvgl_tick,
+        .name = "lvgl_tick_timer"
+    };
+    ESP_ERROR_CHECK(esp_timer_create(&lvgl_tick_timer_args, &lvgl_tick_timer));
+    ESP_ERROR_CHECK(esp_timer_start_periodic(lvgl_tick_timer, LVGL_TICK_PERIOD_MS * 1000));
 
     /* create a screen */
+    ESP_LOGI("APP_MAIN", "Creating LVGL screen");
     lv_display_t *disp = lv_display_create(DISP_WIDTH, DISP_HEIGHT);
 
     /* allocate draw buffer */
+    ESP_LOGI("APP_MAIN", "Allocating draw buffer");
     lv_color_t *buf1 = heap_caps_malloc(LVGL_BUFFER_SIZE, MALLOC_CAP_DMA);
     lv_color_t *buf2 = heap_caps_malloc(LVGL_BUFFER_SIZE, MALLOC_CAP_DMA);
-    lv_display_set_buffers(disp, buf1, buf2, sizeof(buf1), LV_DISPLAY_RENDER_MODE_PARTIAL);
+    lv_display_set_buffers(disp, buf1, buf2, LVGL_BUFFER_SIZE, LV_DISPLAY_RENDER_MODE_PARTIAL);
+
+    /* associate panel handle to the display */
+    ESP_LOGI("APP_MAIN", "Associating panel handle to display");
+    lv_display_set_user_data(disp, panel_handle);
+
+    /* set colour depth */
+    ESP_LOGI("APP_MAIN", "Setting colour depth");
+    lv_display_set_color_format(disp, LV_COLOR_FORMAT_RGB565);
 
     /* flush callback */
+    ESP_LOGI("APP_MAIN", "Setting flush callback");
+    lv_display_set_flush_cb(disp, lv_flush_cb);
 
+    ESP_LOGI("APP_MAIN", "LVGL initialised");
     return ESP_OK;
 
+}
+
+static void lvgl_task(void *arg)
+{
+    ESP_LOGI("APP_MAIN", "Starting LVGL task");
+    
+
+    while (1) {
+        _lock_acquire(&lvgl_api_lock);
+        uint32_t time_till_next = lv_timer_handler();
+        _lock_release(&lvgl_api_lock);
+        uint32_t time_threshold = 1000 / CONFIG_FREERTOS_HZ;
+        time_till_next = time_till_next < time_threshold ? time_till_next : time_threshold;
+        usleep(time_till_next * 1000);
+    }
 }
 
 void app_main(void)
@@ -149,5 +200,14 @@ void app_main(void)
     /* initialise LVGL */
     ESP_LOGI("APP_MAIN", "Initialising LVGL");
     ESP_ERROR_CHECK(lvgl_init());
+
+    /* create LVGL task */
+    ESP_LOGI("APP_MAIN", "Creating LVGL task");
+    xTaskCreate(lvgl_task, "LVGL", LVGL_TASK_STACK_SIZE, NULL, LVGL_TASK_PRIORITY, NULL);
+
+    /* create example */
+    _lock_acquire(&lvgl_api_lock);
+    lv_example_get_started_1();
+    _lock_release(&lvgl_api_lock);
 
 }
