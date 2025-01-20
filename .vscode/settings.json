@@ -1,0 +1,18 @@
+{
+    "C_Cpp.intelliSenseEngine": "default",
+    "idf.espIdfPathWin": "C:\\Users\\Robin\\esp\\v5.4\\esp-idf",
+    "idf.openOcdConfigs": [
+        "board/esp32c3-builtin.cfg"
+    ],
+    "idf.portWin": "COM3",
+    "idf.toolsPathWin": "C:\\Users\\Robin\\.espressif",
+    "idf.flashType": "UART",
+    "files.associations": {
+        "lv_examples.h": "c",
+        "esp_lcd_panel_st7789.h": "c",
+        "lvgl.h": "c",
+        "esp_lcd_panel_ops.h": "c",
+        "esp_lvgl_port.h": "c",
+        "cstdio": "cpp"
+    }
+}
