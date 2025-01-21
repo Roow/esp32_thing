@@ -56,13 +56,26 @@ static void increase_lvgl_tick(void *arg)
 
 static void lv_flush_cb(lv_display_t * display, const lv_area_t * area, uint8_t * px_map)
 {
+    /* rotate screen */
+    esp_lcd_panel_swap_xy(panel_handle, 1);
+    esp_lcd_panel_mirror(panel_handle, 1, 0);
+
+    /* add a gap, apparently panel specific */
+    esp_lcd_panel_set_gap(panel_handle, 40, 53);
+
+    /* Flush display */
     esp_lcd_panel_handle_t panel_handle = (esp_lcd_panel_handle_t) lv_display_get_user_data(display);
     int offsetx1 = area->x1;
     int offsetx2 = area->x2;
     int offsety1 = area->y1;
     int offsety2 = area->y2;
+    
+    lv_draw_sw_rgb565_swap(px_map, (offsetx2 - offsetx1 + 1) * (offsety2 - offsety1 + 1));
 
-    esp_lcd_panel_draw_bitmap(panel_handle, offsetx1, offsety1, offsetx2 + 1, offsety2 + 1, px_map);
+    /* inverter colour */
+    ESP_ERROR_CHECK(esp_lcd_panel_invert_color(panel_handle, 1));
+
+    ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel_handle, offsetx1, offsety1, offsetx2 + 1, offsety2 + 1, px_map));
 
     lv_display_flush_ready(display);
 }
@@ -111,7 +124,7 @@ static esp_err_t lcd_init(void)
     ESP_LOGI("APP_MAIN", "Configuring LCD panel");
     esp_lcd_panel_dev_config_t panel_config = {
         .reset_gpio_num = PIN_NUM_RST,
-        .color_space = ESP_LCD_COLOR_SPACE_RGB,
+        .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_RGB,
         .bits_per_pixel = 16,
         .flags = { 
             .reset_active_high = 0 
